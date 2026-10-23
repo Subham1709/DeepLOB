@@ -1,0 +1,36 @@
+name: record-binance
+# Records Binance BTCUSDT/ETHUSDT top-10 order books (100 ms) and commits the chunks.
+# Each run records just under 6 hours (the job limit); the schedule chains runs back to back.
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes to record"
+        default: "340"
+  schedule:
+    - cron: "0 */6 * * *"
+concurrency:
+  group: record-binance
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install numpy websockets
+      - name: Record
+        run: python scripts/record_binance.py --minutes "${{ github.event.inputs.minutes || '340' }}"
+      - name: Commit chunks
+        run: |
+          du -sh data/binance/* || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898499+github-actions[bot]@users.noreply.github.com"
+          git add data/binance
+          git commit -m "Binance order book chunks ($(date -u +%Y-%m-%dT%H:%MZ))" || exit 0
+          for i in 1 2 3 4; do git pull --rebase -q && git push && break; sleep $((i*10)); done
