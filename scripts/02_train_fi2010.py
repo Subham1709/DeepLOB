@@ -25,7 +25,11 @@ CONFIGS = {
     "A": TrainConfig(name="A", lr=1e-4, batch=64),               # authors' notebook
     "B": TrainConfig(name="B", lr=1e-3, batch=128),              # 10x lr, bigger batch
     "C": TrainConfig(name="C", lr=1e-2, adam_eps=1.0, batch=32),  # paper: lr 0.01, eps 1
+    # D = B's optimiser on inputs z-scored per stock (fi2010.stock_zscore), added after A-C
+    # all lagged the simple baselines. One change from B, so the effect is attributable.
+    "D": TrainConfig(name="D", lr=1e-3, batch=128),
 }
+PER_STOCK_Z = {"D"}
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--k", type=int, required=True, choices=F.HORIZONS)
@@ -43,6 +47,9 @@ torch.set_num_threads(max(1, torch.get_num_threads()))
 data = ROOT / "data" / "fi2010"
 raw = F.load_raw(data, "train")
 tr_seg, va_seg = F.train_val_segments(raw)
+stats = F.stock_zscore(raw, tr_seg) if a.config in PER_STOCK_Z else None
+if stats:
+    raw = F.apply_stock_zscore(raw, stats)
 tr, va = F.make_split(raw, a.k, segments=tr_seg), F.make_split(raw, a.k, segments=va_seg)
 model, report = fit(cfg, Windows(tr.lob, tr.y, tr.ends), Windows(va.lob, va.y, va.ends))
 
@@ -51,7 +58,10 @@ report["val"] = scores(va.y[va.ends], predict(model, Windows(va.lob, va.y, va.en
 ys, ps = [], []
 for day in ("test8", "test9", "test10"):
     r = F.load_raw(data, day)
-    s = F.make_split(r, a.k)
+    seg = F.stock_segments(r)          # before z-scoring: segments are found from price jumps
+    if stats:
+        r = F.apply_stock_zscore(r, stats)
+    s = F.make_split(r, a.k, segments=seg)
     prob = predict(model, Windows(s.lob, s.y, s.ends))
     report[day] = scores(s.y[s.ends], prob)
     ys.append(s.y[s.ends])

@@ -7,6 +7,9 @@ on:
       max_epochs:
         description: "Max epochs (blank = config default, 50)"
         default: ""
+      configs:
+        description: 'JSON list of configs, e.g. ["D"]'
+        default: '["A","B","C"]'
 permissions:
   contents: write
 jobs:
@@ -17,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         k: [10, 20, 50]
-        config: [A, B, C]
+        config: ${{ fromJSON(github.event.inputs.configs || '["A","B","C"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -45,3 +45,12 @@ def test_train_val_split_is_per_stock_with_gap():
     raw = fake_raw((1000, 2000))
     tr, va = F.train_val_segments(raw, val_frac=0.2, gap=100)
     assert tr == [(0, 700), (1000, 2500)] and va == [(800, 1000), (2600, 3000)]
+
+
+def test_stock_zscore_uses_training_rows_per_stock():
+    raw = fake_raw((1000, 2000))
+    tr, _ = F.train_val_segments(raw)
+    z = F.apply_stock_zscore(raw, F.stock_zscore(raw, tr))
+    for s, e in tr:
+        np.testing.assert_allclose(z[:40, s:e].mean(1), 0, atol=1e-3)
+    np.testing.assert_array_equal(z[40:], raw[40:])

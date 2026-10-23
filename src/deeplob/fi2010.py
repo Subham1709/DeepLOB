@@ -112,3 +112,30 @@ def windows(split: Split, idx: np.ndarray, window: int = 100) -> np.ndarray:
     """Materialise input windows for the given positions in split.ends -> (n, window, 40)."""
     t = split.ends[idx]
     return split.lob[t[:, None] - np.arange(window - 1, -1, -1)[None, :]]
+
+
+def stock_zscore(raw_train: np.ndarray, train_segments: list[tuple[int, int]]):
+    """Per-stock mean and std of the 40 book columns, from that stock's *training* rows.
+
+    The "decimal precision" file divides prices by a power of ten, so the five stocks sit at
+    very different levels (about 0.13 to 0.35) while moves inside a window are around 1e-4.
+    Z-scoring each stock with its own training statistics puts every stock on the same scale.
+    The paper normalises with statistics from the previous days, which is the same idea.
+    Stocks appear in the same order in every file, so stock i of a test file uses the
+    statistics of stock i of the training file.
+    """
+    stats = []
+    for s, e in train_segments:
+        x = raw_train[:N_LOB, s:e].astype(np.float64)
+        stats.append((x.mean(1), x.std(1) + 1e-12))
+    return stats
+
+
+def apply_stock_zscore(raw: np.ndarray, stats) -> np.ndarray:
+    """Copy of `raw` with rows 0-39 z-scored per stock segment."""
+    out = raw.copy()
+    segs = stock_segments(raw)
+    assert len(segs) == len(stats), "expected the same five stocks"
+    for (s, e), (m, sd) in zip(segs, stats):
+        out[:N_LOB, s:e] = ((raw[:N_LOB, s:e] - m[:, None]) / sd[:, None]).astype(raw.dtype)
+    return out

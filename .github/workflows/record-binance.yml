@@ -1,6 +1,9 @@
 name: record-binance
 # Records Binance BTCUSDT/ETHUSDT top-10 order books (100 ms) and commits the chunks.
-# Each run records just under 6 hours (the job limit); the schedule chains runs back to back.
+# Each run records just under 6 hours (the job limit), then dispatches the next run itself
+# before committing, so the recording is continuous. GitHub delays scheduled runs by hours
+# at busy times, so the cron is only a backup that restarts the chain if it breaks.
+# Stop recording by disabling the workflow (Actions tab -> record-binance -> Disable).
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +17,7 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: write
+  actions: write
 jobs:
   record:
     runs-on: ubuntu-latest
@@ -26,6 +30,11 @@ jobs:
       - run: pip install numpy websockets
       - name: Record
         run: python scripts/record_binance.py --minutes "${{ github.event.inputs.minutes || '340' }}"
+      - name: Start the next run
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.minutes == '340'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run record-binance.yml --ref main -f minutes=340
       - name: Commit chunks
         run: |
           du -sh data/binance/* || true
