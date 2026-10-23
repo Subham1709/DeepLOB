@@ -1,0 +1,39 @@
+name: train-fi2010
+# Trains DeepLOB on FI-2010: one job per (horizon k, hyperparameter config), in parallel.
+# Each job commits its results/fi2010/*.json and models/fi2010/*.pt.
+on:
+  workflow_dispatch:
+    inputs:
+      max_epochs:
+        description: "Max epochs (blank = config default, 50)"
+        default: ""
+permissions:
+  contents: write
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        k: [10, 20, 50]
+        config: [A, B, C]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - name: Train
+        run: |
+          python scripts/02_train_fi2010.py --k ${{ matrix.k }} --config ${{ matrix.config }} \
+            ${{ github.event.inputs.max_epochs && format('--max-epochs {0}', github.event.inputs.max_epochs) || '' }}
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898499+github-actions[bot]@users.noreply.github.com"
+          git add results/fi2010 models/fi2010
+          git commit -m "FI-2010 DeepLOB k=${{ matrix.k }} config ${{ matrix.config }}" || exit 0
+          for i in 1 2 3 4 5 6; do git pull --rebase -q && git push && break; sleep $((i*15)); done
