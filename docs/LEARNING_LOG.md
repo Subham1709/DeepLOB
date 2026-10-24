@@ -274,3 +274,76 @@ hyperparameters on validation only, checked that input scaling wasn't the cause,
 found the network overfits a 7-day training set on a benchmark whose labels mostly encode
 past returns. That is why my main evaluation is on crypto data with future-only labels and
 a fee-aware backtest."
+
+---
+
+## Step 6. The Binance experiment: labels, splits and baselines (`src/deeplob/binance.py`)
+
+*Numbers in this step are from the first 31 hours of recording (Oct 23-24). They will be
+rerun on the full week.*
+
+**Choosing the horizon from the data.** BTCUSDT's mid-price changes only about once every
+5 seconds: the spread is one tick ($0.01 on $81,000, about 0.001 bp) and there are often
+several BTC waiting at the best price. Over 1 second the mean move is 0.06 bp, so almost
+every 1-second label would be noise. We predict 10, 30 and 60 seconds ahead (100, 300, 600
+snapshots), from the last 10 seconds of book (100 snapshots), one prediction per second.
+
+**Labels use only the future.** r = mean of the next h mids / current mid - 1. Unlike
+FI-2010 (step 2), nothing in the label is known at prediction time. The flat band alpha is
+set on the training period so that the three classes are equally common: 0.17 bp (BTC) and
+0.57 bp (ETH) at 30 s.
+
+**Chronological split with an embargo.** First 60% of the recording for training, next 20%
+for validation, last 20% for test, and `T + h` snapshots dropped at each cut so no label
+peeks across. Shuffling snapshots randomly into train and test would put almost identical
+neighbours on both sides, the same leakage as naive K-fold in the Nifty project.
+
+**Inputs.** Prices as log distance from the window's last mid, divided by a per-column scale
+fitted on training windows; volumes as log(1 + quantity), z-scored on training. So the model
+sees the shape of the book and how it moved within the window, not the BTC price level.
+BTC and ETH are pooled into one model per horizon.
+
+**Baselines (test macro F1, chance = 0.333).**
+
+| model | 10 s | 30 s | 60 s |
+|---|---|---|---|
+| Logistic regression, past returns only | 0.308 | 0.311 | 0.306 |
+| Logistic regression, book features | 0.524 | 0.450 | 0.407 |
+| LightGBM, book features | 0.531 | 0.384 | 0.337 |
+
+Two things to notice. Past returns alone are at chance: with honest labels there is no
+momentum to exploit at these horizons, the opposite of FI-2010. And the order book does
+carry information (0.52 at 10 s), which fades with the horizon, as you'd expect: the book
+tells you about the next few seconds, not the next minute. LightGBM is worse than the linear
+model beyond 10 s: with one day of training data, it overfits patterns that don't survive
+into the next day.
+
+## Step 7. Does it make money? (`src/deeplob/backtest.py`)
+
+**The rule.** Every h seconds: go long one unit if "up" is the most likely class, short if
+"down", flat otherwise; hold for h seconds. Buy at the ask, sell at the bid, and pay the
+exchange fee on notional each time the position changes. No queue position, latency or
+market impact, so reality is worse than this.
+
+**Result (first 31 hours, test period).** With zero fees every book-feature model makes
+money: hit rates of 53-55% and +0.2 to +0.7 bp per trade. The *break-even fee* (the fee per
+side at which profit is zero) is 0.1 to 0.7 bp. Binance charges 10 bp per side at the base
+tier (7.5 with the BNB discount). So the strategy that is "right 55% of the time" loses
+roughly 15-25 times what it makes once you pay the fees.
+
+| fee per side | net P&L, logistic regression, 10 s, BTC |
+|---|---|
+| 0 bp | +475 bp |
+| 1 bp | -751 bp |
+| 10 bp | -11,785 bp |
+
+**What this means.** The signal is real but tiny compared to costs. Firms that trade on it
+are market makers who *earn* the spread with limit orders and pay near-zero or negative
+fees, or they use it to time execution of trades they were going to make anyway. A retail
+taker can't monetise it. That is the gap between "60% accuracy" and "profitable after
+fees" the project set out to show.
+
+**Interview line.** "On Binance BTC and ETH, order book features predict the 10-second
+mid-price direction with macro F1 0.52 against 0.33 for chance, and the signal makes about
+0.5 bp per trade before costs. The break-even fee is under 1 bp; Binance's taker fee is 10.
+So it's a real signal that only a maker or a fee-tier-1 firm could use."
