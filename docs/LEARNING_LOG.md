@@ -212,3 +212,65 @@ tiny batch (if a network can't overfit 16 examples, something is broken).
 **Cost on this machine.** One pass over the 200,000 training windows takes about 18
 minutes on 4 CPU cores, so a 100-epoch run like the paper's would take over a day. Choices
 for that come with the hyperparameters.
+
+---
+
+## Step 5. Training on FI-2010 and choosing hyperparameters (`src/deeplob/train.py`)
+
+Full table: `results/fi2010_summary.md` (made by `scripts/04_summarize_fi2010.py`).
+
+**How training works.** Adam, cross-entropy loss, mini-batches of windows. After every
+epoch we score the validation set (the last 20% of each stock's training days) and keep the
+weights with the best validation macro F1. Training stops after 10 epochs without
+improvement. To fit GitHub's 6-hour job limit on CPUs we train on every 4th window; next-door
+windows share 99 of their 100 snapshots, so this throws away much less information than it
+sounds like.
+
+**Choosing hyperparameters without cheating.** You asked to try 2-3 settings and keep the
+best. "Best" must be measured on validation, never on test: if you pick the setting with
+the best *test* score, the test score is no longer an honest estimate of performance on new
+data (the same trap as naive CV in the Nifty project). So each setting's test score is
+computed once, and only the validation-chosen one is reported.
+
+| setting | what it is | why try it |
+|---|---|---|
+| A | lr 1e-4, batch 64 | the authors' notebook |
+| B | lr 1e-3, batch 128 | 10x faster learning |
+| C | lr 1e-2, Adam eps 1, batch 32 | the paper's stated settings |
+| D | B, with each stock's inputs z-scored by its own training statistics | added after A-C, to test whether input scaling explained the gap below |
+
+Nine runs (A-C x k = 10, 20, 50) ran in parallel on GitHub Actions, about 1-2 hours each.
+B won on validation at every horizon and A was clearly worst: lr 1e-4 is simply too slow
+for this budget.
+
+**Result: our DeepLOB is well below the paper and below simple baselines.**
+
+| model (test macro F1) | k = 10 | k = 20 | k = 50 |
+|---|---|---|---|
+| Logistic regression, 8 past returns | 0.800 | 0.690 | 0.786 |
+| LightGBM, 53 book features | 0.806 | 0.716 | 0.832 |
+| DeepLOB, ours (chosen setting) | 0.663 (D) | 0.609 (B) | 0.737 (D) |
+| DeepLOB, paper | 0.834 | 0.728 | 0.803 |
+
+**Why, as far as we can tell.**
+
+- *Not input scaling.* Setting D (per-stock normalisation) changed F1 by -0.03 to +0.01.
+- *Overfitting.* Training loss keeps falling while validation loss starts rising after 10-25
+  epochs: the network memorises the 7 training days. The F1 for the up and down classes is
+  about 0.55-0.67 versus 0.75 for LightGBM; the network mostly learns "flat".
+- *The task rewards a shortcut the network has to rediscover.* Step 2 showed the labels are
+  mostly the recent past move. LightGBM and logistic regression are handed past returns as
+  features; DeepLOB has to work them out from raw prices, where the moves are 10,000 times
+  smaller than the price level.
+- *Less training.* The paper trained much longer on a GPU with every window.
+
+So our reproduction does not reach the published number. We report that as it is rather
+than tuning on the test set until it does: three settings plus one diagnostic were tried,
+all chosen on validation.
+
+**Interview line.** "My DeepLOB reached macro F1 0.66 to 0.74 on FI-2010 against 0.80 to
+0.83 in the paper, and a LightGBM on 53 hand-made features beat both. I picked
+hyperparameters on validation only, checked that input scaling wasn't the cause, and
+found the network overfits a 7-day training set on a benchmark whose labels mostly encode
+past returns. That is why my main evaluation is on crypto data with future-only labels and
+a fee-aware backtest."
