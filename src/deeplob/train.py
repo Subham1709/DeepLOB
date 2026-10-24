@@ -21,6 +21,7 @@ class TrainConfig:
     name: str = "A"
     lr: float = 1e-4
     adam_eps: float = 1e-8
+    weight_decay: float = 0.0  # > 0 switches Adam to AdamW (decoupled weight decay)
     batch: int = 64
     max_epochs: int = 50
     patience: int = 10
@@ -61,15 +62,22 @@ def scores(y: np.ndarray, prob: np.ndarray) -> dict:
                 f1_per_class=[float(v) for v in f1_score(y, p, average=None, labels=[0, 1, 2])])
 
 
-def fit(cfg: TrainConfig, train: Windows, val: Windows, log=print):
-    """Adam + cross-entropy; keep the weights with the best validation macro F1."""
+def fit(cfg: TrainConfig, train, val, log=print, y_val: np.ndarray | None = None):
+    """Adam + cross-entropy; keep the weights with the best validation macro F1.
+
+    `train` / `val` are any datasets of (window, label). For a `Windows` val set the labels
+    are read from it; otherwise pass `y_val` (labels of every item in `val`, in order).
+    """
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
     model = DeepLOB()
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
+    if cfg.weight_decay > 0:
+        opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps, weight_decay=cfg.weight_decay)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
     sub_tr = torch.utils.data.Subset(train, np.arange(0, len(train), cfg.train_stride))
     sub_va = torch.utils.data.Subset(val, np.arange(0, len(val), cfg.val_stride))
-    y_va = val.y[val.ends[::cfg.val_stride]].numpy()
+    y_va = (val.y[val.ends].numpy() if y_val is None else np.asarray(y_val))[::cfg.val_stride]
     loader = torch.utils.data.DataLoader(sub_tr, batch_size=cfg.batch, shuffle=True,
                                          generator=torch.Generator().manual_seed(cfg.seed))
     best, best_state, history, bad = -1.0, None, [], 0

@@ -1,0 +1,42 @@
+name: train-binance
+# Trains DeepLOB on the recorded Binance data: one job per (horizon h, config), in parallel.
+# Each job commits its results/binance/* and models/binance/*.pt.
+on:
+  workflow_dispatch:
+    inputs:
+      max_epochs:
+        description: "Max epochs (blank = config default, 40)"
+        default: ""
+      configs:
+        description: 'JSON list of configs, e.g. ["D"]'
+        default: '["B","C","E"]'
+permissions:
+  contents: write
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        h: [100, 300, 600]
+        config: ${{ fromJSON(github.event.inputs.configs || '["B","C","E"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - name: Train
+        run: |
+          python scripts/05_train_binance.py --h ${{ matrix.h }} --config ${{ matrix.config }} \
+            ${{ github.event.inputs.max_epochs && format('--max-epochs {0}', github.event.inputs.max_epochs) || '' }}
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898499+github-actions[bot]@users.noreply.github.com"
+          git add results/binance models/binance
+          git commit -m "Binance DeepLOB h=${{ matrix.h }} config ${{ matrix.config }}" || exit 0
+          for i in 1 2 3 4 5 6; do git pull --rebase -q && git push && break; sleep $((i*15)); done

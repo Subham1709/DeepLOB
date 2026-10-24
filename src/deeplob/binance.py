@@ -136,3 +136,47 @@ class BinanceWindows(torch.utils.data.Dataset):
         x[:, 0::4], x[:, 1::4] = p[:, :L], q[:, :L]
         x[:, 2::4], x[:, 3::4] = p[:, L:], q[:, L:]
         return x, self.y[t]
+
+
+SYMBOLS = ("BTCUSDT", "ETHUSDT")
+
+
+@dataclass
+class Prepared:
+    """One symbol at one horizon: the book, labels and window ends for train / val / test."""
+    symbol: str
+    h: int
+    book: Book
+    y: np.ndarray
+    r: np.ndarray
+    alpha: float
+    ends: dict
+    scales: tuple
+
+    def windows(self, split: str, stride: int = 1, T: int = 100) -> BinanceWindows:
+        return BinanceWindows(self.book, self.y, self.ends[split][::stride], *self.scales, T=T)
+
+
+def time_split(book: Book, h: int, T: int = 100, fractions=(0.6, 0.2, 0.2)) -> dict:
+    """Chronological train / val / test split of the prediction times.
+
+    Cut points are set on recording time. Around each cut, `T + h` snapshots are dropped
+    (an embargo), so that no training label looks into the validation period and no
+    validation window starts inside the training period.
+    """
+    ends = window_ends(book, h, T)
+    t = book.t[ends]
+    c1, c2 = np.quantile(t, [fractions[0], fractions[0] + fractions[1]])
+    gap_ms = (T + h) * 100
+    return {"train": ends[t < c1 - gap_ms],
+            "val": ends[(t >= c1) & (t < c2 - gap_ms)],
+            "test": ends[t >= c2]}
+
+
+def prepare(root: Path, symbol: str, h: int, T: int = 100) -> Prepared:
+    book = load_symbol(root, symbol)
+    ends = time_split(book, h, T)
+    r = future_return(book.mid, h)
+    alpha = balanced_alpha(r[ends["train"]])
+    y = labels(np.nan_to_num(r), alpha)
+    return Prepared(symbol, h, book, y, r, alpha, ends, fit_scales(book, ends["train"], T))
