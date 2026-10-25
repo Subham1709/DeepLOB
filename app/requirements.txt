@@ -1,0 +1,5 @@
+# The web app needs no torch: it replays saved predictions (see app/precompute.py).
+streamlit>=1.50
+numpy>=1.26
+pandas>=2.1
+plotly>=5.20
