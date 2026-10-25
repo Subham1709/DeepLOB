@@ -1,5 +1,8 @@
 # DeepLOB: predicting mid-price moves from limit order books
 
+**Live app: [subham-deeplob.streamlit.app](https://subham-deeplob.streamlit.app)**
+(step through the order book, trade the models' predictions at any fee; [app/README.md](app/README.md))
+
 A from-scratch PyTorch implementation of DeepLOB (Zhang, Zohren & Roberts, 2019) on the
 FI-2010 benchmark and on Binance BTCUSDT / ETHUSDT Level-2 data recorded for this project,
 with logistic regression and LightGBM baselines, a fee-aware trading backtest and ONNX
@@ -72,6 +75,7 @@ scripts/06_latency.py        ONNX export + latency
 scripts/07_backtest_binance.py  -> results/binance_summary.md
 scripts/record_binance.py    run by the record-binance workflow
 data/binance/             recorded order book chunks (committed by the workflow)
+app/                      Streamlit web app (replays saved test predictions)
 ```
 
 ## Running

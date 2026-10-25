@@ -1,0 +1,20 @@
+{
+ "100": {
+  "logreg_past": "logreg_past_C1.0",
+  "logreg_book": "logreg_all_C0.1",
+  "lightgbm": "lightgbm_L15",
+  "deeplob": "deeplob_B"
+ },
+ "300": {
+  "logreg_past": "logreg_past_C0.01",
+  "logreg_book": "logreg_all_C0.01",
+  "lightgbm": "lightgbm_L15",
+  "deeplob": "deeplob_B"
+ },
+ "600": {
+  "logreg_past": "logreg_past_C1.0",
+  "logreg_book": "logreg_all_C1.0",
+  "lightgbm": "lightgbm_L63",
+  "deeplob": "deeplob_B"
+ }
+}
