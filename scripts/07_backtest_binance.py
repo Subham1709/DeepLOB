@@ -8,6 +8,7 @@ high-volume tiers and market makers get close to 0-1 bp.
 """
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -44,9 +45,15 @@ out = ["# Binance results", "",
        "BTCUSDT and ETHUSDT spot, top 10 levels every 100 ms, recorded from Binance's public "
        "WebSocket. Chronological split 60 / 20 / 20 with an embargo; labels from future mids only, "
        "classes balanced on the training period. Configs chosen on validation macro F1.", ""]
-first = next(iter(books.values()))
-out.append(f"Data: {len(first.t):,} BTC snapshots, recording time "
-           f"{sum((first.t[e - 1] - first.t[s]) / 3.6e6 for s, e in B.sessions(first.t)):.1f} h.")
+# The recorder keeps appending chunks; the models saw data up to `data_end_ms`. Later rows
+# don't shift earlier indices (chunks are appended in time order), so saved ends stay valid.
+end_ms = max(json.loads(p.read_text())["data_end_ms"] for p in R.glob("deeplob_h*_*.json"))
+t = next(iter(books.values())).t
+t = t[t <= end_ms]
+hours = sum((t[e - 1] - t[s]) / 3.6e6 for s, e in B.sessions(t))
+out.append(f"Data: {len(t):,} BTC snapshots, {hours:.1f} h of recording "
+           f"({datetime.fromtimestamp(t[0] / 1000, timezone.utc):%Y-%m-%d %H:%M} to "
+           f"{datetime.fromtimestamp(t[-1] / 1000, timezone.utc):%Y-%m-%d %H:%M} UTC).")
 out += ["", "## Classification (test macro F1, both symbols)", "",
         "| model | 10 s | 30 s | 60 s |", "|---|---|---|---|"]
 table, chosen = {}, {}

@@ -310,13 +310,25 @@ BTC and ETH are pooled into one model per horizon.
 | Logistic regression, past returns only | 0.308 | 0.311 | 0.306 |
 | Logistic regression, book features | 0.524 | 0.450 | 0.407 |
 | LightGBM, book features | 0.531 | 0.384 | 0.337 |
+| DeepLOB (setting B, chosen on validation) | **0.541** | **0.466** | **0.435** |
 
-Two things to notice. Past returns alone are at chance: with honest labels there is no
+Three things to notice. Past returns alone are at chance: with honest labels there is no
 momentum to exploit at these horizons, the opposite of FI-2010. And the order book does
 carry information (0.52 at 10 s), which fades with the horizon, as you'd expect: the book
 tells you about the next few seconds, not the next minute. LightGBM is worse than the linear
 model beyond 10 s: with one day of training data, it overfits patterns that don't survive
 into the next day.
+
+And here, unlike FI-2010, **DeepLOB is the best model at every horizon**, by 1.5-3 F1
+points over the linear model and more over LightGBM. With honest labels there is no
+past-return shortcut for the baselines to take, so learning from the raw book pays off.
+
+**DeepLOB settings tried** (you asked for 2-3, best on validation): B (lr 1e-3, batch 128,
+the FI-2010 winner), C (the paper's lr 1e-2 with Adam eps 1) and E (lr 3e-4 with weight
+decay, aimed at the overfitting seen on FI-2010). Nine jobs ran in parallel on GitHub
+Actions, 30-70 minutes each. B won on validation at all three horizons, with E close at
+10 and 30 s. All runs peaked after 3-8 epochs and then overfit, which is typical with only
+one day of training data; a week of data should help.
 
 ## Step 7. Does it make money? (`src/deeplob/backtest.py`)
 
@@ -325,9 +337,10 @@ into the next day.
 exchange fee on notional each time the position changes. No queue position, latency or
 market impact, so reality is worse than this.
 
-**Result (first 31 hours, test period).** With zero fees every book-feature model makes
-money: hit rates of 53-55% and +0.2 to +0.7 bp per trade. The *break-even fee* (the fee per
-side at which profit is zero) is 0.1 to 0.7 bp. Binance charges 10 bp per side at the base
+**Result (first 31 hours, test period).** With zero fees, 17 of the 18 model /
+symbol / horizon combinations make money (the exception: logistic regression on ETH at
+60 s), with hit rates around 50-55% and up to +0.9 bp per trade. The *break-even fee* (the
+fee per side at which profit is zero) is at most 0.7 bp. Binance charges 10 bp per side at the base
 tier (7.5 with the BNB discount). So the strategy that is "right 55% of the time" loses
 roughly 15-25 times what it makes once you pay the fees.
 
@@ -336,6 +349,12 @@ roughly 15-25 times what it makes once you pay the fees.
 | 0 bp | +475 bp |
 | 1 bp | -751 bp |
 | 10 bp | -11,785 bp |
+
+DeepLOB, despite the best F1, doesn't make more money: at 10 s it nets +417 bp on BTC at
+zero fees (logistic regression: +475), and its break-even fees, 0.1-0.7 bp, are like the
+rest. **Better classification did not mean better trading.** Macro F1 counts every correct
+call equally, but P&L depends on getting the *large* moves right, and a model can gain F1 on
+small moves that don't pay. Full table: `results/binance_summary.md`.
 
 **What this means.** The signal is real but tiny compared to costs. Firms that trade on it
 are market makers who *earn* the spread with limit orders and pay near-zero or negative
@@ -347,3 +366,27 @@ fees" the project set out to show.
 mid-price direction with macro F1 0.52 against 0.33 for chance, and the signal makes about
 0.5 bp per trade before costs. The break-even fee is under 1 bp; Binance's taker fee is 10.
 So it's a real signal that only a maker or a fee-tier-1 firm could use."
+
+
+## Step 8. Speed: ONNX export and latency (`scripts/06_latency.py`)
+
+**Why it matters.** A signal that predicts the next 10 seconds is only useful if the
+prediction arrives well within those seconds. HFT firms care about microseconds; here the
+question is just whether DeepLOB is fast enough to run on every book update (every 100 ms).
+
+**What we did.** Exported the trained 10-second model to ONNX (an open format that fast
+inference engines read) and timed one prediction at a time on one CPU core, 2,000 calls.
+
+| engine | median | p99 |
+|---|---|---|
+| PyTorch eager | 2,714 us | 4,491 us |
+| ONNX Runtime | 807 us | 930 us |
+
+ONNX Runtime is 3.4x faster, with a tighter tail (p99 only 15% above the median), and its
+outputs match PyTorch to 4e-7. At 0.8 ms per prediction, one core can keep up with 100 ms
+updates more than 100 times over. For real HFT, the next steps would be computing the
+convolutions incrementally (each new snapshot only changes the last row of the window),
+quantising to int8, or rewriting the network in C++.
+
+**Interview line.** "Exported to ONNX: 0.8 ms median, 0.9 ms p99 on one CPU core, 3.4x
+faster than PyTorch eager, with identical outputs."
