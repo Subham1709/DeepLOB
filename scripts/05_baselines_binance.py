@@ -6,6 +6,7 @@ symbols together; scored per symbol. Config chosen on validation macro F1. Saves
 probabilities for the backtest. Writes results/binance/baselines.json and
 results/binance/pred_<model>_h<h>.npz.
 """
+import gc
 import json
 import sys
 from pathlib import Path
@@ -29,8 +30,9 @@ OUT = ROOT / "results" / "binance"
 OUT.mkdir(parents=True, exist_ok=True)
 
 results = {}
+books = {s: B.load_symbol(ROOT / "data" / "binance", s) for s in B.SYMBOLS}   # ~2 GB each
 for h in HORIZONS:
-    preps = [B.prepare(ROOT / "data" / "binance", s, h) for s in B.SYMBOLS]
+    preps = [B.prepare(ROOT / "data" / "binance", s, h, book=books[s]) for s in B.SYMBOLS]
     data = {}
     for split in ("train", "val", "test"):
         Xs, ys, ids = [], [], []
@@ -68,7 +70,18 @@ for h in HORIZONS:
         for i, s in enumerate(B.SYMBOLS):
             np.savez_compressed(OUT / f"pred_{name}_h{h}_{s}.npz", ends=preps[i].ends["test"][::STRIDE],
                                 prob=pte[idte == i].astype(np.float32))
+    # Keep test predictions only for each family's validation-chosen config (saves ~50 MB).
+    for fam in ("logreg_past", "logreg_all", "lightgbm"):
+        names = [n for n in res if n.startswith(fam)]
+        best = max(names, key=lambda n: res[n]["val"]["macro_f1"])
+        for n in names:
+            if n != best:
+                for s in B.SYMBOLS:
+                    (OUT / f"pred_{n}_h{h}_{s}.npz").unlink(missing_ok=True)
     results[h] = dict(res=res, alpha_bps={p.symbol: p.alpha * 1e4 for p in preps},
                       n={k: int(len(v[1])) for k, v in data.items()},
-                      class_share_test=np.bincount(yte, minlength=3).tolist())
-(OUT / "baselines.json").write_text(json.dumps(results, indent=1))
+                      class_share_test=np.bincount(yte, minlength=3).tolist(),
+                      data_end_ms=int(preps[0].book.t[-1]))
+    (OUT / "baselines.json").write_text(json.dumps(results, indent=1))
+    del preps, data, models, Xtr, Xva, Xte
+    gc.collect()

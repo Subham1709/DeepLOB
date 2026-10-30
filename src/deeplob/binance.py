@@ -182,8 +182,9 @@ def time_split(book: Book, h: int, T: int = 100, fractions=(0.6, 0.2, 0.2)) -> d
             "test": ends[t >= c2]}
 
 
-def prepare(root: Path, symbol: str, h: int, T: int = 100) -> Prepared:
-    book = load_symbol(root, symbol)
+def prepare(root: Path, symbol: str, h: int, T: int = 100, book: Book | None = None) -> Prepared:
+    """Pass `book` (from load_symbol) to reuse one loaded book for several horizons."""
+    book = load_symbol(root, symbol) if book is None else book
     ends = time_split(book, h, T)
     r = future_return(book.mid, h)
     alpha = balanced_alpha(r[ends["train"]])
