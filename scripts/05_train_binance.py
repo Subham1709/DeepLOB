@@ -22,14 +22,16 @@ sys.path.insert(0, str(ROOT / "src"))
 from deeplob import binance as B  # noqa: E402
 from deeplob.train import TrainConfig, fit, predict, scores  # noqa: E402
 
-TRAIN_STRIDE, VAL_STRIDE, TEST_STRIDE = 20, 20, 10   # snapshots; 100 ms each
+# Snapshots, 100 ms each. With a week of data, every 6th second of training windows is
+# ~130k windows a pass (~10 min on a runner); one test prediction per second.
+TRAIN_STRIDE, VAL_STRIDE, TEST_STRIDE = 60, 60, 10
 CONFIGS = {
     "B": TrainConfig(name="B", lr=1e-3, batch=128),                          # best on FI-2010
     "C": TrainConfig(name="C", lr=1e-2, adam_eps=1.0, batch=32),             # paper
     "E": TrainConfig(name="E", lr=3e-4, batch=128, weight_decay=1e-4),       # slower + weight decay (FI-2010 overfit)
 }
 for c in CONFIGS.values():
-    c.train_stride, c.val_stride, c.max_epochs, c.patience = 1, 1, 40, 8
+    c.train_stride, c.val_stride, c.max_epochs, c.patience = 1, 1, 30, 5
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--h", type=int, required=True)

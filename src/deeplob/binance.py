@@ -111,11 +111,17 @@ class BinanceWindows(torch.utils.data.Dataset):
     """Same interface as train.Windows: (window (T, 40) float32, label)."""
 
     def __init__(self, book: Book, y: np.ndarray, ends: np.ndarray, p_scale: np.ndarray,
-                 q_mean: np.ndarray, q_std: np.ndarray, T: int = 100):
-        self.lp = torch.from_numpy(book.log_p.astype(np.float64))
+                 q_mean: np.ndarray, q_std: np.ndarray, T: int = 100, shared: dict | None = None):
+        # A week of 100 ms snapshots is ~6.5M rows per symbol, so the big arrays are built once
+        # and shared between the train / val / test datasets (pass the same `shared` dict).
+        if shared is None:
+            shared = {}
+        if not shared:
+            shared["lp"] = torch.from_numpy(np.asarray(book.log_p, np.float64))   # no copy
+            shared["lmid"] = torch.from_numpy(np.log(book.mid))
+            shared["q"] = torch.from_numpy(((book.log_q - q_mean) / q_std).astype(np.float32))
+        self.lp, self.lmid, self.q = shared["lp"], shared["lmid"], shared["q"]
         self.p_scale = torch.from_numpy(np.asarray(p_scale, np.float64))
-        self.lmid = torch.from_numpy(np.log(book.mid))
-        self.q = torch.from_numpy(((book.log_q - q_mean) / q_std).astype(np.float32))
         self.y = torch.from_numpy(y)
         self.ends = ends
         self.T = T
@@ -154,7 +160,10 @@ class Prepared:
     scales: tuple
 
     def windows(self, split: str, stride: int = 1, T: int = 100) -> BinanceWindows:
-        return BinanceWindows(self.book, self.y, self.ends[split][::stride], *self.scales, T=T)
+        if not hasattr(self, "_shared"):
+            self._shared = {}
+        return BinanceWindows(self.book, self.y, self.ends[split][::stride], *self.scales, T=T,
+                              shared=self._shared)
 
 
 def time_split(book: Book, h: int, T: int = 100, fractions=(0.6, 0.2, 0.2)) -> dict:
