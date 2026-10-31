@@ -279,8 +279,8 @@ a fee-aware backtest."
 
 ## Step 6. The Binance experiment: labels, splits and baselines (`src/deeplob/binance.py`)
 
-*Numbers in this step are from the first 31 hours of recording (Oct 23-24). They will be
-rerun on the full week.*
+*Data: one week of recording, Oct 23 09:17 to Oct 30 19:07 UTC (172.6 hours, about 6
+million snapshots per symbol). A first run on the first 31 hours is compared at the end.*
 
 **Choosing the horizon from the data.** BTCUSDT's mid-price changes only about once every
 5 seconds: the spread is one tick ($0.01 on $81,000, about 0.001 bp) and there are often
@@ -290,45 +290,68 @@ snapshots), from the last 10 seconds of book (100 snapshots), one prediction per
 
 **Labels use only the future.** r = mean of the next h mids / current mid - 1. Unlike
 FI-2010 (step 2), nothing in the label is known at prediction time. The flat band alpha is
-set on the training period so that the three classes are equally common: 0.17 bp (BTC) and
-0.57 bp (ETH) at 30 s.
+set on the training period so that the three classes are equally common: 0.22 bp (BTC) and
+0.65 bp (ETH) at 30 s. For BTC at 10 s the band is zero: in more than a third of training
+windows the mid doesn't move at all in the next 10 seconds, so "flat" there means exactly
+no change.
 
-**Chronological split with an embargo.** First 60% of the recording for training, next 20%
-for validation, last 20% for test, and `T + h` snapshots dropped at each cut so no label
-peeks across. Shuffling snapshots randomly into train and test would put almost identical
-neighbours on both sides, the same leakage as naive K-fold in the Nifty project.
+**Chronological split with an embargo.** First 60% of the recording for training (about 4.3
+days), next 20% for validation, last 20% for test (about 34 hours, Oct 29 morning to Oct 30
+evening), and `T + h` snapshots dropped at each cut so no label peeks across. Shuffling
+snapshots randomly into train and test would put almost identical neighbours on both sides,
+the same leakage as naive K-fold in the Nifty project.
 
 **Inputs.** Prices as log distance from the window's last mid, divided by a per-column scale
 fitted on training windows; volumes as log(1 + quantity), z-scored on training. So the model
 sees the shape of the book and how it moved within the window, not the BTC price level.
 BTC and ETH are pooled into one model per horizon.
 
-**Baselines (test macro F1, chance = 0.333).**
+**Results (test macro F1, chance = 0.333).**
 
 | model | 10 s | 30 s | 60 s |
 |---|---|---|---|
-| Logistic regression, past returns only | 0.308 | 0.311 | 0.306 |
-| Logistic regression, book features | 0.524 | 0.450 | 0.407 |
-| LightGBM, book features | 0.531 | 0.384 | 0.337 |
-| DeepLOB (setting B, chosen on validation) | **0.541** | **0.466** | **0.435** |
+| Logistic regression, past returns only | 0.259 | 0.337 | 0.315 |
+| Logistic regression, book features | 0.485 | **0.426** | **0.409** |
+| LightGBM, book features | 0.466 | 0.372 | 0.345 |
+| DeepLOB (setting chosen on validation) | **0.499** | 0.421 | 0.395 |
 
-Three things to notice. Past returns alone are at chance: with honest labels there is no
-momentum to exploit at these horizons, the opposite of FI-2010. And the order book does
-carry information (0.52 at 10 s), which fades with the horizon, as you'd expect: the book
-tells you about the next few seconds, not the next minute. LightGBM is worse than the linear
-model beyond 10 s: with one day of training data, it overfits patterns that don't survive
-into the next day.
+Four things to notice. Past returns alone are at or below chance: with honest labels there is
+no momentum to exploit at these horizons, the opposite of FI-2010. (At 10 s that model mostly
+predicts "flat", having learned that quiet seconds are followed by quiet seconds; the test
+days were busier, so it scores below chance.)
 
-And here, unlike FI-2010, **DeepLOB is the best model at every horizon**, by 1.5-3 F1
-points over the linear model and more over LightGBM. With honest labels there is no
-past-return shortcut for the baselines to take, so learning from the raw book pays off.
+The order book does carry information (0.49-0.50 at 10 s), which fades with the horizon, as
+you'd expect: the book tells you about the next few seconds, not the next minute.
+
+LightGBM is worse than the linear model at every horizon: it fits patterns of the training
+days that don't carry over to later days.
+
+And **DeepLOB is the best model only at 10 s**, by 1.4 points over logistic regression; at 30
+and 60 s the linear model is 0.5-1.4 points ahead. On one 34-hour test period, gaps of one
+point are within noise, so the honest summary is: DeepLOB matches a well-built linear model
+on hand-made features, it doesn't beat it. DeepLOB also saw fewer examples: one window every
+6 seconds (122,000 windows over both symbols) to fit GitHub's 6-hour CPU job limit, against one per second for
+the baselines.
 
 **DeepLOB settings tried** (you asked for 2-3, best on validation): B (lr 1e-3, batch 128,
 the FI-2010 winner), C (the paper's lr 1e-2 with Adam eps 1) and E (lr 3e-4 with weight
 decay, aimed at the overfitting seen on FI-2010). Nine jobs ran in parallel on GitHub
-Actions, 30-70 minutes each. B won on validation at all three horizons, with E close at
-10 and 30 s. All runs peaked after 3-8 epochs and then overfit, which is typical with only
-one day of training data; a week of data should help.
+Actions, 25-120 minutes each. Validation picked E at 10 s and B at 30 and 60 s; the three
+settings were within 1.6 points of each other everywhere (table in
+`results/binance_summary.md`). At 30 and 60 s, C happened to do slightly better on test
+than the chosen B (0.427 vs 0.421, 0.401 vs 0.395), but we report the validation choice:
+picking on test would be the leak we avoided everywhere else. Most runs peaked after 5-6
+epochs (range 2-12) and then overfit, even with 5.6 times as many hours of data as the first
+run.
+
+**What changed from the first 31 hours.** The first run (data to Oct 24 21:13, a 6-hour test
+period) had DeepLOB best at every horizon: 0.541 / 0.466 / 0.435 against 0.524 / 0.450 /
+0.407 for logistic regression. With the full week every model scored lower and DeepLOB's lead
+went away. The main reason is the test days: the mid moved more often, so only 14-17% of
+test labels are "flat" (a third or more in training), and every model is worst on that
+class (at 10 s, flat F1 is 0.25-0.34 against 0.54-0.60 for up and down). The lesson: a 6-hour
+test period was too short to rank the models, and the earlier "DeepLOB wins" didn't survive
+more data. That is why we reran.
 
 ## Step 7. Does it make money? (`src/deeplob/backtest.py`)
 
@@ -337,35 +360,37 @@ one day of training data; a week of data should help.
 exchange fee on notional each time the position changes. No queue position, latency or
 market impact, so reality is worse than this.
 
-**Result (first 31 hours, test period).** With zero fees, 17 of the 18 model /
-symbol / horizon combinations make money (the exception: logistic regression on ETH at
-60 s), with hit rates around 50-55% and up to +0.9 bp per trade. The *break-even fee* (the
-fee per side at which profit is zero) is at most 0.7 bp. Binance charges 10 bp per side at the base
-tier (7.5 with the BNB discount). So the strategy that is "right 55% of the time" loses
-roughly 15-25 times what it makes once you pay the fees.
+**Result (one-week run, 34-hour test period).** With zero fees, all 18 model / symbol /
+horizon combinations make money, with hit rates of 51.5-57.4% and 0.3-0.7 bp per trade. The
+*break-even fee* (the fee per side at which profit is zero) is at most 0.69 bp. Binance
+charges 10 bp per side at the base tier (7.5 with the BNB discount). So the strategy that is
+"right 55% of the time" loses 14-29 times what it makes once you pay the fees.
 
 | fee per side | net P&L, logistic regression, 10 s, BTC |
 |---|---|
-| 0 bp | +475 bp |
-| 1 bp | -751 bp |
-| 10 bp | -11,785 bp |
+| 0 bp | +5,387 bp |
+| 1 bp | -4,163 bp |
+| 10 bp | -90,113 bp |
 
-DeepLOB, despite the best F1, doesn't make more money: at 10 s it nets +417 bp on BTC at
-zero fees (logistic regression: +475), and its break-even fees, 0.1-0.7 bp, are like the
-rest. **Better classification did not mean better trading.** Macro F1 counts every correct
-call equally, but P&L depends on getting the *large* moves right, and a model can gain F1 on
-small moves that don't pay. Full table: `results/binance_summary.md`.
+DeepLOB doesn't make more money than the simpler models: at 10 s it nets +5,617 bp on BTC at
+zero fees (logistic regression +5,387, LightGBM +5,743) and +4,887 on ETH (logistic regression
++4,969), and its break-even fees, 0.43-0.59 bp, are in the middle of the pack. The first
+31-hour run showed the same thing with DeepLOB's better F1: **better classification did not
+mean better trading.** Macro F1 counts every correct call equally, but P&L depends on getting
+the *large* moves right, and a model can gain F1 on small moves that don't pay. Full table:
+`results/binance_summary.md`; the web app reruns it at any fee.
 
 **What this means.** The signal is real but tiny compared to costs. Firms that trade on it
 are market makers who *earn* the spread with limit orders and pay near-zero or negative
 fees, or they use it to time execution of trades they were going to make anyway. A retail
-taker can't monetise it. That is the gap between "60% accuracy" and "profitable after
+taker can't monetise it. That is the gap between "55% accuracy" and "profitable after
 fees" the project set out to show.
 
-**Interview line.** "On Binance BTC and ETH, order book features predict the 10-second
-mid-price direction with macro F1 0.52 against 0.33 for chance, and the signal makes about
-0.5 bp per trade before costs. The break-even fee is under 1 bp; Binance's taker fee is 10.
-So it's a real signal that only a maker or a fee-tier-1 firm could use."
+**Interview line.** "On a week of Binance BTC and ETH order books, the book predicts the
+10-second mid-price direction with macro F1 0.50 against 0.33 for chance, out of sample, and
+the signal makes about 0.5 bp per trade before costs. The break-even fee is under 0.7 bp;
+Binance's taker fee is 10. A CNN-LSTM on the raw book matched logistic regression on
+hand-made features but didn't beat it."
 
 
 ## Step 8. Speed: ONNX export and latency (`scripts/06_latency.py`)
@@ -374,19 +399,22 @@ So it's a real signal that only a maker or a fee-tier-1 firm could use."
 prediction arrives well within those seconds. HFT firms care about microseconds; here the
 question is just whether DeepLOB is fast enough to run on every book update (every 100 ms).
 
-**What we did.** Exported the trained 10-second model to ONNX (an open format that fast
-inference engines read) and timed one prediction at a time on one CPU core, 2,000 calls.
+**What we did.** Exported the trained 10-second model (setting E) to ONNX (an open format
+that fast inference engines read) and timed one prediction at a time on one CPU core, 2,000
+calls.
 
 | engine | median | p99 |
 |---|---|---|
-| PyTorch eager | 2,714 us | 4,491 us |
-| ONNX Runtime | 807 us | 930 us |
+| PyTorch eager | 2,930 us | 5,843 us |
+| ONNX Runtime | 943 us | 1,439 us |
 
-ONNX Runtime is 3.4x faster, with a tighter tail (p99 only 15% above the median), and its
-outputs match PyTorch to 4e-7. At 0.8 ms per prediction, one core can keep up with 100 ms
-updates more than 100 times over. For real HFT, the next steps would be computing the
-convolutions incrementally (each new snapshot only changes the last row of the window),
-quantising to int8, or rewriting the network in C++.
+ONNX Runtime is 3.1x faster, and its outputs match PyTorch to 1.2e-7. The first measurement
+(Oct 25, a different cloud machine) gave 807 us median and 930 us p99, so the tail depends on
+the machine more than on the model; on a shared cloud CPU, other jobs cause the slow calls.
+At under 1 ms per prediction, one core can keep up with 100 ms updates about 100 times over.
+For real HFT, the next steps would be computing the convolutions incrementally (each new
+snapshot only changes the last row of the window), quantising to int8, or rewriting the
+network in C++.
 
-**Interview line.** "Exported to ONNX: 0.8 ms median, 0.9 ms p99 on one CPU core, 3.4x
-faster than PyTorch eager, with identical outputs."
+**Interview line.** "Exported to ONNX: about 0.9 ms median per prediction on one CPU core,
+3x faster than PyTorch eager, with identical outputs."

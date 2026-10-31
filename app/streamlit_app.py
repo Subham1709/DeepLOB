@@ -22,7 +22,7 @@ APP = Path(__file__).resolve().parent
 ROOT = APP.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from deeplob.backtest import backtest  # noqa: E402
+from deeplob.backtest import backtest, decision_rows  # noqa: E402
 
 REPO = "https://github.com/Subham1709/DeepLOB"
 HORIZONS = {"10 s": 100, "30 s": 300, "60 s": 600}
@@ -37,7 +37,13 @@ st.set_page_config(page_title="DeepLOB", page_icon="📊", layout="wide")
 
 @st.cache_data
 def load(sym):
-    return dict(np.load(APP / "assets" / f"binance_{sym}.npz"))
+    z = dict(np.load(APP / "assets" / f"binance_{sym}.npz"))
+    # times and best prices are stored delta-encoded (ms, integer ticks); see precompute.py
+    z["t"] = np.cumsum(z.pop("dt"))
+    for k in ("bid1", "ask1"):
+        z[k] = np.cumsum(z.pop(f"d{k}")) * float(z["tick"])
+    z["mid"] = (z["ask1"] + z["bid1"]) / 2
+    return z
 
 
 @st.cache_data
@@ -50,11 +56,7 @@ def summary(sym, h, fam, fee, min_prob):
 def equity(z, fam, h, fee, min_prob):
     """Cumulative net bps per decision, same rules as deeplob.backtest (rebuilt to keep the path)."""
     ends, prob = z[f"ends_{fam}_h{h}"], z[f"prob_{fam}_h{h}"]
-    take, last = [], -np.inf
-    for i, t in enumerate(ends):
-        if t >= last + h:
-            take.append(i)
-            last = t
+    take = decision_rows(ends, h)
     t, p = ends[take], prob[take]
     sig = np.where((p[:, 2] >= p.max(1)) & (p[:, 2] > min_prob), 1,
                    np.where((p[:, 0] >= p.max(1)) & (p[:, 0] > min_prob), -1, 0))
@@ -168,10 +170,10 @@ with tab_res:
     st.markdown("""
 | model | 10 s | 30 s | 60 s |
 |---|---|---|---|
-| Logistic regression, past returns only | 0.308 | 0.311 | 0.306 |
-| Logistic regression, book features | 0.524 | 0.450 | 0.407 |
-| LightGBM, book features | 0.531 | 0.384 | 0.337 |
-| **DeepLOB** | **0.541** | **0.466** | **0.435** |
+| Logistic regression, past returns only | 0.259 | 0.337 | 0.315 |
+| Logistic regression, book features | 0.485 | **0.426** | **0.409** |
+| LightGBM, book features | 0.466 | 0.372 | 0.345 |
+| DeepLOB | **0.499** | 0.421 | 0.395 |
 """)
     chosen = json.loads((APP / "assets" / "chosen.json").read_text())
     curves = go.Figure()
@@ -186,14 +188,15 @@ with tab_res:
                          xaxis_title="epoch", yaxis_title="val macro F1", height=380)
     st.plotly_chart(curves, width="stretch")
     st.markdown(
-        "Data: about 1.1 million snapshots per symbol, 31 hours of recording (23-24 Oct 2026). "
-        "Chronological 60/20/20 split with an embargo; classes balanced on the training "
-        f"period; configs chosen on validation (models used here: `{chosen['600']['deeplob']}`, "
-        f"`{chosen['600']['lightgbm']}`). Full tables: "
+        "Data: about 6 million snapshots per symbol, one week of recording (23-30 Oct 2026); "
+        "the test period is the last 34 hours. Chronological 60/20/20 split with an embargo; "
+        "classes balanced on the training period; configs chosen on validation (DeepLOB "
+        f"models used here: `{chosen['100']['deeplob']}` at 10 s, `{chosen['300']['deeplob']}` "
+        f"at 30 s, `{chosen['600']['deeplob']}` at 60 s). Full tables: "
         f"[results/binance_summary.md]({REPO}/blob/main/results/binance_summary.md).")
     st.subheader("Inference latency")
-    st.markdown("Batch 1, one CPU thread: **ONNX Runtime 0.81 ms median, 0.93 ms p99**; "
-                "PyTorch eager 2.7 ms. Same logits to 4e-7.")
+    st.markdown("Batch 1, one CPU thread: **ONNX Runtime 0.94 ms median, 1.44 ms p99**; "
+                "PyTorch eager 2.9 ms. Same logits to 1.2e-7.")
 
 # --------------------------------------------------------------------------- fi2010
 with tab_fi:

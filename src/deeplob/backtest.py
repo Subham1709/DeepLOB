@@ -16,16 +16,21 @@ from __future__ import annotations
 import numpy as np
 
 
-def backtest(mid: np.ndarray, bid1: np.ndarray, ask1: np.ndarray, ends: np.ndarray,
-             prob: np.ndarray, h: int, fee_bps: float, min_prob: float = 0.0) -> dict:
-    """`ends` are sorted prediction times with probabilities `prob` (n, 3: down, flat, up).
-    Decisions are taken at ends[0], then at the first prediction time >= previous + h."""
+def decision_rows(ends: np.ndarray, h: int) -> np.ndarray:
+    """Indices of the decision times: ends[0], then the first prediction time >= previous + h."""
     take, last = [], -np.inf
     for i, t in enumerate(ends):
         if t >= last + h:
             take.append(i)
             last = t
-    take = np.asarray(take)
+    return np.asarray(take, dtype=np.int64)
+
+
+def backtest(mid: np.ndarray, bid1: np.ndarray, ask1: np.ndarray, ends: np.ndarray,
+             prob: np.ndarray, h: int, fee_bps: float, min_prob: float = 0.0) -> dict:
+    """`ends` are sorted prediction times with probabilities `prob` (n, 3: down, flat, up).
+    Decisions are taken at `decision_rows(ends, h)`."""
+    take = decision_rows(ends, h)
     t = ends[take]
     p = prob[take]
     signal = np.where((p[:, 2] >= p.max(1)) & (p[:, 2] > min_prob), 1,

@@ -5,10 +5,14 @@
 The full recording is millions of 100 ms snapshots (and keeps growing), too much for a
 free web host's memory. The app only needs the test period, so this writes
 app/assets/binance_<SYMBOL>.npz with:
-  t, mid, bid1, ask1     the test period (plus the last horizon), indices shifted to start at 0
+  dt, dbid1, dask1, tick the test period (plus the last horizon), indices shifted to start at 0:
+                         times (ms) and best bid / ask (integer ticks), delta-encoded so they
+                         compress well; the app rebuilds t, bid1, ask1 and mid
   book_*                 the full top-10 book for the first 10 minutes of the test period
   pred_<family>_h<h>     prediction times (shifted) and class probabilities of the model
-                         chosen on validation in each family (as in scripts/07_backtest_binance.py)
+                         chosen on validation in each family (as in scripts/07_backtest_binance.py),
+                         kept only at the backtest's decision times (every h), which don't
+                         depend on the probabilities
 """
 import json
 import sys
@@ -20,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from deeplob import binance as B  # noqa: E402
+from deeplob.backtest import decision_rows  # noqa: E402
 from deeplob.recorder import load_chunk  # noqa: E402
 
 R = ROOT / "results" / "binance"
@@ -58,11 +63,16 @@ def main():
                 preds[(fam, h)] = (z["ends"], z["prob"])
         lo = min(e.min() for e, _ in preds.values())
         hi = max(e.max() for e, _ in preds.values()) + max(HORIZONS) + 1
-        arrays = dict(t=book.t[lo:hi], mid=book.mid[lo:hi], bid1=book.bid1[lo:hi],
-                      ask1=book.ask1[lo:hi])
+        tick = float(np.load(next((ROOT / "data" / "binance" / sym).glob("*.npz")))["tick"])
+        arrays = dict(dt=np.diff(book.t[lo:hi], prepend=0), tick=tick)
+        for k in ("bid1", "ask1"):
+            ticks = np.rint(getattr(book, k)[lo:hi] / tick).astype(np.int64)
+            assert np.array_equal(ticks * tick, getattr(book, k)[lo:hi])
+            arrays[f"d{k}"] = np.diff(ticks, prepend=0)
         for (fam, h), (e, p) in preds.items():
-            arrays[f"ends_{fam}_h{h}"] = (e - lo).astype(np.int32)
-            arrays[f"prob_{fam}_h{h}"] = p.astype(np.float32)
+            keep = decision_rows(e, h)
+            arrays[f"ends_{fam}_h{h}"] = (e[keep] - lo).astype(np.int32)
+            arrays[f"prob_{fam}_h{h}"] = p[keep].astype(np.float32)
         # raw top-10 book for the depth chart: re-read the chunks (Book keeps logs only)
         t0 = book.t[lo]
         for path in sorted((ROOT / "data" / "binance" / sym).glob("*.npz")):
@@ -73,7 +83,7 @@ def main():
                     arrays[f"book_{key}"] = c[key][k:k + BOOK_ROWS]
                 break
         np.savez_compressed(OUT / f"binance_{sym}.npz", **arrays)
-        print(sym, {k: v.shape for k, v in arrays.items() if not k.startswith(("ends", "prob"))},
+        print(sym, {k: np.shape(v) for k, v in arrays.items() if not k.startswith(("ends", "prob"))},
               (OUT / f"binance_{sym}.npz").stat().st_size // 1024, "KB")
     (OUT / "chosen.json").write_text(json.dumps({str(h): f for h, f in picks.items()}, indent=1))
 

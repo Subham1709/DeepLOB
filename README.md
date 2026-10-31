@@ -8,10 +8,10 @@ FI-2010 benchmark and on Binance BTCUSDT / ETHUSDT Level-2 data recorded for thi
 with logistic regression and LightGBM baselines, a fee-aware trading backtest and ONNX
 latency measurements.
 
-**Status:** FI-2010 done. Binance results below are from the first 31 hours of recording; they will be rerun on a full week of data.
+**Status:** complete. Binance results are from one week of recording (Oct 23-30, 2026); the recorder is stopped.
 The step-by-step write-up is in [docs/LEARNING_LOG.md](docs/LEARNING_LOG.md).
 
-## Finding so far: FI-2010's labels are mostly known in advance
+## Finding: FI-2010's labels are mostly known in advance
 
 A logistic regression on just 8 *past* mid-price returns, all inside the model's input
 window, gets close to the published DeepLOB scores on FI-2010
@@ -39,21 +39,26 @@ Four DeepLOB settings were tried ([results/fi2010_summary.md](results/fi2010_sum
 The network overfits the 7 training days and doesn't reach the published scores; a tree
 model on simple features beats it. Details in step 5 of the learning log.
 
-## Binance BTC / ETH results (first 31 hours; test macro F1, chance = 0.333)
+## Binance BTC / ETH results (one week; test macro F1, chance = 0.333)
 
 | model | 10 s | 30 s | 60 s |
 |---|---|---|---|
-| Logistic regression, past returns only | 0.308 | 0.311 | 0.306 |
-| Logistic regression, book features | 0.524 | 0.450 | 0.407 |
-| LightGBM, book features | 0.531 | 0.384 | 0.337 |
-| DeepLOB, this repo | **0.541** | **0.466** | **0.435** |
+| Logistic regression, past returns only | 0.259 | 0.337 | 0.315 |
+| Logistic regression, book features | 0.485 | **0.426** | **0.409** |
+| LightGBM, book features | 0.466 | 0.372 | 0.345 |
+| DeepLOB, this repo | **0.499** | 0.421 | 0.395 |
 
-With labels built from future prices only, DeepLOB is the best model. But the
-[backtest](results/binance_summary.md) shows none of them can pay Binance's fees: trading the
-predictions makes at most +0.9 bp per trade before costs, the break-even fee is at most 0.7 bp
-per side, and the base taker fee is 10 bp.
+172.6 hours of BTCUSDT and ETHUSDT top-10 books at 100 ms, split 60/20/20 in time (test: the
+last 34 hours), with labels built from future prices only. DeepLOB is best at 10 s, and
+logistic regression on hand-made book features is slightly ahead at 30 and 60 s, so the deep
+model matches a good linear model rather than beating it. (On the first 31 hours DeepLOB led
+at every horizon; that lead didn't survive the longer test period. Learning log, step 6.)
 
-ONNX inference: 0.8 ms median, 0.9 ms p99 per prediction on one CPU core
+The [backtest](results/binance_summary.md) shows none of the models can pay Binance's fees:
+all of them make money before costs (0.3-0.7 bp per trade), but the break-even fee is at most
+0.7 bp per side, and the base taker fee is 10 bp.
+
+ONNX inference: 0.9 ms median per prediction on one CPU core, 3x faster than PyTorch
 ([results/latency.md](results/latency.md)).
 
 ## Layout
@@ -74,7 +79,7 @@ scripts/05_baselines_binance.py / 05_train_binance.py   Binance baselines / Deep
 scripts/06_latency.py        ONNX export + latency
 scripts/07_backtest_binance.py  -> results/binance_summary.md
 scripts/record_binance.py    run by the record-binance workflow
-data/binance/             recorded order book chunks (committed by the workflow)
+data/binance/             recorded order book chunks, Oct 23-30 2026 (committed by the workflow)
 app/                      Streamlit web app (replays saved test predictions)
 ```
 
